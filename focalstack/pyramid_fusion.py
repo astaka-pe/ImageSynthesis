@@ -16,7 +16,6 @@ def align_images(ref_img, img, name="aligned"):
     aligned = cv2.warpAffine(img, warp_matrix, (ref_img.shape[1], ref_img.shape[0]),
                              flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
     
-    # --- 追加: アライメント結果を保存 ---
     cv2.imwrite(f"tmp/{name}.png", aligned)
 
     return aligned
@@ -30,19 +29,15 @@ def normalize_map(weight):
     weight = np.clip(weight, 0, None)
     return weight / (np.max(weight) + 1e-8)
 
-def build_gaussian_pyramid(img, levels, prefix="gauss"):
+def build_gaussian_pyramid(img, levels):
     gp = [img.astype(np.float64)]
-    cv2.imwrite(f"tmp/{prefix}_level0.png", np.clip(gp[0],0,255).astype(np.uint8))
-
     for i in range(1, levels+1):
         img = cv2.pyrDown(img)
         gp.append(img.astype(np.float64))
-        cv2.imwrite(f"tmp/{prefix}_level{i}.png", np.clip(gp[i],0,255).astype(np.uint8))
-
     return gp
 
-def build_laplacian_pyramid(img, levels, prefix="lap"):
-    gp = build_gaussian_pyramid(img, levels, prefix="gauss")
+def build_laplacian_pyramid(img, levels):
+    gp = build_gaussian_pyramid(img, levels)
     lp = []
 
     for i in range(levels):
@@ -50,14 +45,7 @@ def build_laplacian_pyramid(img, levels, prefix="lap"):
         GE = cv2.pyrUp(gp[i+1], dstsize=size)
         L = gp[i] - GE
         lp.append(L)
-        # Laplacianは負の値もあるので表示用に正規化
-        L_vis = cv2.normalize(L, None, 0, 255, cv2.NORM_MINMAX)
-        cv2.imwrite(f"tmp/{prefix}_level{i}.png", L_vis.astype(np.uint8))
-
-    # 最後のガウシアンレベルも追加（低周波成分）
     lp.append(gp[-1])
-    cv2.imwrite(f"tmp/{prefix}_level{levels}.png", np.clip(gp[-1],0,255).astype(np.uint8))
-
     return lp
 
 def reconstruct_laplacian_pyramid(lp):
@@ -67,33 +55,28 @@ def reconstruct_laplacian_pyramid(lp):
         img = cv2.pyrUp(img, dstsize=size) + lp[i]
     return np.clip(img, 0, 255).astype(np.uint8)
 
-def multi_focus_fusion_pyramid(images, levels=5):
+def multi_focus_fusion_pyramid(images, levels=3):
     gray_imgs = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images]
     
-    # フォーカスマップとウェイトマップ
     focus_maps = [compute_focus_map(g) for g in gray_imgs]
     weights = [normalize_map(f) for f in focus_maps]
 
-    # ウェイトマップをガウシアンピラミッドに分解
-    weight_pyrs = [build_gaussian_pyramid(w, levels) for w in weights]
+    weight_pyrs = [build_gaussian_pyramid(w, levels) for i, w in enumerate(weights)]
 
-    # 各画像をラプラシアンピラミッドに分解
-    lap_pyrs = [build_laplacian_pyramid(img, levels) for img in images]
+    lap_pyrs = [build_laplacian_pyramid(img, levels) for i, img in enumerate(images)]
 
-    # ピラミッド合成
     fused_pyr = []
     for level in range(levels+1):
         num = np.zeros_like(lap_pyrs[0][level])
         den = np.zeros_like(weight_pyrs[0][level])
         for lap, wp in zip(lap_pyrs, weight_pyrs):
-            w = cv2.merge([wp[level]]*3)  # 3チャンネル化
+            w = cv2.merge([wp[level]]*3)
             num += lap[level] * w
             den += wp[level]
         den3 = cv2.merge([den, den, den])
         fused = num / (den3 + 1e-8)
         fused_pyr.append(fused)
-    
-    # 再構成
+        
     fused_img = reconstruct_laplacian_pyramid(fused_pyr)
     return fused_img
 
@@ -109,5 +92,5 @@ if __name__ == "__main__":
     img2_aligned = align_images(img1, img2, name="aligned_mid")
     img3_aligned = align_images(img1, img3, name="aligned_far")
 
-    fused = multi_focus_fusion_pyramid([img1, img2_aligned, img3_aligned], levels=5)
+    fused = multi_focus_fusion_pyramid([img1, img2_aligned, img3_aligned], levels=3)
     cv2.imwrite("output/fused_pyramid.jpg", fused)
