@@ -1,47 +1,21 @@
 import cv2
 import numpy as np
 import os
+import sys
 
-def align_images(ref_img, img, name="aligned"):
-    """Align img to ref_img using ECC (affine warp)."""
-    ref_gray = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__name__), "..")))
+from utils.common import align_images, normalize_map
 
-    warp_mode = cv2.MOTION_AFFINE
-    warp_matrix = np.eye(2, 3, dtype=np.float32)
-
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 5000, 1e-6)
-    cc, warp_matrix = cv2.findTransformECC(ref_gray, img_gray, warp_matrix, warp_mode, criteria)
-    
-    aligned = cv2.warpAffine(img, warp_matrix, (ref_img.shape[1], ref_img.shape[0]),
-                             flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
-    
-    cv2.imwrite(f"tmp/{name}.png", aligned)
-
-    return aligned
-
-def compute_focus_map(img_gray, ksize=5, name="focusmap"):
-    """Compute per-pixel focus measure (Laplacian absolute response)."""
+def compute_focus_map(img_gray, ksize=5):
     lap = cv2.Laplacian(img_gray, cv2.CV_64F, ksize=ksize)
-    abs_lap = np.abs(lap)
-
-    vis = cv2.normalize(abs_lap, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    cv2.imwrite(f"tmp/{name}.png", vis)
-
-    return abs_lap
-
-def normalize_map(weight):
-    weight = cv2.GaussianBlur(weight, (5,5), 0)
-    weight = np.clip(weight, 0, None)
-    norm = weight / (np.max(weight) + 1e-8)
-    return norm
+    return np.abs(lap)
 
 def multi_focus_fusion(images):
     """Perform multi-focus image fusion."""
     gray_imgs = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images]
 
     # Compute focus maps
-    focus_maps = [compute_focus_map(g, name=f"focusmap_{i}") for i, g in enumerate(gray_imgs)]
+    focus_maps = [compute_focus_map(g) for i, g in enumerate(gray_imgs)]
     weights = [normalize_map(f) for i, f in enumerate(focus_maps)]
 
     # Weighted average
@@ -60,7 +34,6 @@ def multi_focus_fusion(images):
 
 # ========== Main ==========
 if __name__ == "__main__":
-    os.makedirs("tmp", exist_ok=True)
     os.makedirs("output", exist_ok=True)
 
     # Load images (3 focus levels)
@@ -69,8 +42,8 @@ if __name__ == "__main__":
     img3 = cv2.imread("input/focus_far.png")
 
     # Align images to the first one
-    img2_aligned = align_images(img1, img2, name="aligned_mid")
-    img3_aligned = align_images(img1, img3, name="aligned_far")
+    img2_aligned = align_images(img1, img2)
+    img3_aligned = align_images(img1, img3)
 
     # Multi-focus fusion
     fused = multi_focus_fusion([img1, img2_aligned, img3_aligned])
