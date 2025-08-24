@@ -10,6 +10,6 @@ pip install -r requirements.txt
 
 ## Documents
 
-1. [Multi-Focus Image Fusion](./focalstack/README.md)
+1. [Multi-Focus Image Fusion](./focalstack)
 
 Coming Soon...
